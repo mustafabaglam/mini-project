@@ -1,0 +1,124 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+	<meta charset="UTF-8" />
+	<title>Arduino Radar</title>
+	<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+	<div id="canvas"></div>
+
+	<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+	<script src="js/math.js"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/raphael/2.3.0/raphael.min.js"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/stats.js/r16/Stats.min.js"></script>
+	<script src="/socket.io/socket.io.js"></script>
+	<script>
+		!(function () {
+			var stats = new Stats();
+			stats.domElement.style.position = 'fixed';
+			stats.domElement.style.left = '0px';
+			stats.domElement.style.top = '0px';
+			document.body.appendChild(stats.domElement);
+
+			var socket = io();
+
+			var W = 800, H = 800;
+			var cx = W / 2, cy = H / 2;
+			var R = 340;
+			var maxDistance = 100;
+			var duration = 380;
+
+			var GREEN = '#00ff41';
+			var RED   = '#ff3333';
+
+			var paper = Raphael('canvas', W, H);
+
+			var distances = {};
+			var detectionArea = null;
+
+			// --- grid ---
+			var ringStyle  = { fill: 'none', stroke: GREEN, 'stroke-width': 1, opacity: 0.45 };
+			var gridStyle  = { fill: 'none', stroke: GREEN, 'stroke-width': 1, opacity: 0.25 };
+			var labelStyle = { 'font-size': 11, fill: GREEN, 'font-family': 'monospace', opacity: 0.8 };
+
+			[1, 0.75, 0.5, 0.25].forEach(function (s) {
+				paper.circle(cx, cy, R * s).attr(ringStyle);
+				paper.text(cx + 5, cy - R * s + 12, Math.round(maxDistance * s) + ' cm')
+					.attr(labelStyle).attr({ 'text-anchor': 'start' });
+			});
+			paper.text(cx + 5, cy + 12, '0 cm').attr(labelStyle).attr({ 'text-anchor': 'start' });
+
+			// cross + diagonal lines
+			[0, 45, 90, 135].forEach(function (deg) {
+				var rad = deg * Math.PI / 180;
+				var dx = Math.sin(rad) * R, dy = Math.cos(rad) * R;
+				paper.path('M' + (cx - dx) + ' ' + (cy + dy) + 'L' + (cx + dx) + ' ' + (cy - dy)).attr(gridStyle);
+			});
+
+			// degree labels along the outer ring
+			[-45, 0, 45].forEach(function (deg) {
+				var pt = getPointAt(R + 18, deg);
+				paper.text(pt.x, pt.y, deg + '°').attr(labelStyle);
+			});
+
+			// --- sweep line ---
+			var sweepLine = paper.path('M' + cx + ' ' + cy + ' L' + cx + ' ' + (cy - R))
+				.attr({ stroke: GREEN, 'stroke-width': 2, 'stroke-opacity': 0.9 });
+
+			// anchor dot at center
+			paper.circle(cx, cy, 4).attr({ fill: GREEN, stroke: 'none', opacity: 0.9 });
+
+			// --- helpers ---
+			function getPointAt(radius, angleDeg) {
+				var rad = angleDeg * Math.PI / 180;
+				return {
+					x: cx + Math.sin(rad) * radius,
+					y: cy - Math.cos(rad) * radius
+				};
+			}
+
+			function buildPath() {
+				var angles = Object.keys(distances).map(Number).sort(function (a, b) { return a - b; });
+				if (angles.length < 1) return '';
+				var p = 'M' + cx + ' ' + cy;
+				for (var i = 0; i < angles.length; i++) {
+					var d = distances[angles[i]];
+					var r = (d <= 0) ? 0 : Math.min((d / maxDistance) * R, R);
+					var pt = getPointAt(r, angles[i]);
+					p += 'L' + pt.x.toFixed(1) + ' ' + pt.y.toFixed(1);
+				}
+				return p + 'Z';
+			}
+
+			// --- draw ---
+			function draw(distance, angle) {
+				distances[angle] = distance;
+
+				var tip = getPointAt(R, angle);
+				sweepLine.animate({ path: 'M' + cx + ' ' + cy + ' L' + tip.x.toFixed(1) + ' ' + tip.y.toFixed(1) }, duration);
+
+				var pathStr = buildPath();
+				if (!detectionArea) {
+					detectionArea = paper.path(pathStr).attr({
+						fill: RED,
+						'fill-opacity': 0.55,
+						stroke: RED,
+						'stroke-width': 1.5
+					});
+				} else {
+					detectionArea.attr({ path: pathStr });
+				}
+
+				stats.update();
+			}
+
+			socket.on('message', function (raw) {
+				var data = JSON.parse(raw);
+				// data.r = 0..90, convert to display angle -45..45 (centered at north)
+				draw(data.d, data.r - 45);
+			});
+		})();
+	</script>
+</body>
+</html>
