@@ -17,6 +17,8 @@ body {
 }
 
 #canvas {
+	width: 800px;
+	height: 800px;
 	background: #000;
 	border: 1px solid rgba(0, 255, 65, 0.4);
 	box-shadow:
